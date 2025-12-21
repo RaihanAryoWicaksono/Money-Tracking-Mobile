@@ -32,3 +32,27 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+/vendor
+/node_modules
+/public/storage
+/storage/*.key
+/storage/logs
+/storage/framework
+/bootstrap/cache
+
+.env
+.env.*
+
+.phpunit.result.cache
+
+.idea
+.vscode
+.DS_Store
+
+npm-debug.log*
+yarn-error.log*
+
+/homestead.yaml
+/homestead.json
+
