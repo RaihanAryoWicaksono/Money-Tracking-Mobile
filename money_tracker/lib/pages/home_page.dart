@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../models/transaction.dart';
 import '../widgets/balance_card.dart';
@@ -14,6 +15,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   final List<Transaction> _transactions = [];
+  bool _isLoading = false;
 
   @override
   void initState() {
@@ -21,7 +23,9 @@ class _HomePageState extends State<HomePage> {
     _loadTransactions();
   }
 
+  // ================= LOAD DATA =================
   Future<void> _loadTransactions() async {
+    setState(() => _isLoading = true);
     try {
       final data = await ApiService.fetchTransactions();
       setState(() {
@@ -30,50 +34,191 @@ class _HomePageState extends State<HomePage> {
           ..addAll(data);
       });
     } catch (e) {
-      debugPrint(e.toString());
+      debugPrint('ERROR LOAD TRANSACTION: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Gagal memuat transaksi: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
+  // ================= CALCULATION =================
   double get totalBalance {
-    return _transactions.fold(0, (sum, t) {
-      return t.type == TransactionType.income ? sum + t.amount : sum - t.amount;
-    });
+    return _transactions.fold(
+      0,
+      (sum, t) =>
+          t.type == TransactionType.income ? sum + t.amount : sum - t.amount,
+    );
   }
 
-  double get totalIncome {
-    return _transactions
-        .where((t) => t.type == TransactionType.income)
-        .fold(0.0, (sum, t) => sum + t.amount);
+  double get totalIncome => _transactions
+      .where((t) => t.type == TransactionType.income)
+      .fold(0.0, (sum, t) => sum + t.amount);
+
+  double get totalExpense => _transactions
+      .where((t) => t.type == TransactionType.expense)
+      .fold(0.0, (sum, t) => sum + t.amount);
+
+  // ================= CRUD =================
+  Future<void> _addTransaction(Transaction transaction, File? image) async {
+    try {
+      debugPrint('SUBMIT TRANSACTION: ${transaction.title}');
+      await ApiService.addTransaction(transaction, image);
+      debugPrint('UPLOAD SUCCESS');
+      await _loadTransactions();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Transaksi berhasil ditambahkan'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('ERROR ADD TRANSACTION: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Gagal menambah transaksi: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
-  double get totalExpense {
-    return _transactions
-        .where((t) => t.type == TransactionType.expense)
-        .fold(0.0, (sum, t) => sum + t.amount);
-  }
+  Future<void> _updateTransaction(Transaction transaction, File? image) async {
+    try {
+      debugPrint('UPDATE TRANSACTION ID: ${transaction.id}');
+      await ApiService.updateTransaction(transaction.id, transaction, image);
+      await _loadTransactions();
 
-  Future<void> _addTransaction(Transaction transaction) async {
-    await ApiService.addTransaction(transaction);
-    await _loadTransactions();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Transaksi berhasil diperbarui'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('ERROR UPDATE TRANSACTION: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Gagal memperbarui transaksi: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _deleteTransaction(Transaction transaction) async {
-    await ApiService.deleteTransaction(transaction.id);
-    setState(() {
-      _transactions.removeWhere((t) => t.id == transaction.id);
-    });
-  }
+    debugPrint('=== DELETE TRANSACTION CALLED ===');
+    debugPrint('Transaction ID: ${transaction.id}');
+    debugPrint('Transaction Title: ${transaction.title}');
 
-  void _updateTransaction(String id, Transaction updatedTransaction) async {
-    await ApiService.updateTransaction(id, updatedTransaction);
-    setState(() {
-      final index = _transactions.indexWhere((t) => t.id == id);
-      if (index != -1) {
-        _transactions[index] = updatedTransaction;
+    // Show loading indicator
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Row(
+            children: [
+              SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                ),
+              ),
+              SizedBox(width: 16),
+              Text('Menghapus transaksi...'),
+            ],
+          ),
+          duration: Duration(minutes: 1),
+        ),
+      );
+    }
+
+    try {
+      // Call API delete
+      await ApiService.deleteTransaction(transaction.id);
+
+      // Remove from local list
+      setState(() {
+        _transactions.removeWhere((t) => t.id == transaction.id);
+      });
+
+      if (mounted) {
+        // Hide loading
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+        // Show success
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Row(
+              children: [
+                Icon(Icons.check_circle, color: Colors.white),
+                SizedBox(width: 12),
+                Text('Transaksi berhasil dihapus'),
+              ],
+            ),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
       }
-    });
+    } catch (e) {
+      debugPrint('=== DELETE ERROR ===');
+      debugPrint('ERROR: $e');
+
+      if (mounted) {
+        // Hide loading
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+        // Show error with retry option
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.error_outline, color: Colors.white),
+                    SizedBox(width: 12),
+                    Text('Gagal menghapus transaksi'),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(e.toString(), style: const TextStyle(fontSize: 12)),
+              ],
+            ),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+            action: SnackBarAction(
+              label: 'Coba Lagi',
+              textColor: Colors.white,
+              onPressed: () => _deleteTransaction(transaction),
+            ),
+          ),
+        );
+      }
+    }
   }
 
+  // ================= UI =================
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -81,6 +226,13 @@ class _HomePageState extends State<HomePage> {
         title: const Text('Ayo Menabung'),
         backgroundColor: Colors.brown,
         foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadTransactions,
+            tooltip: 'Refresh',
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -90,26 +242,14 @@ class _HomePageState extends State<HomePage> {
             totalExpense: totalExpense,
           ),
           const SizedBox(height: 16),
-          Expanded(
-            child: _transactions.isEmpty
-                ? _emptyState()
-                : ListView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: _transactions.length,
-                    itemBuilder: (context, index) {
-                      final t = _transactions[index];
 
-                      return TransactionCard(
-                        transaction: t,
-                        onEdit: (updated) {
-                          _updateTransaction(t.id, updated);
-                        },
-                        onDelete: () {
-                          _deleteTransaction(t);
-                        },
-                      );
-                    },
-                  ),
+          // 🔥 LOADING / EMPTY / LIST STATE
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _transactions.isEmpty
+                ? _emptyState()
+                : _transactionList(),
           ),
         ],
       ),
@@ -123,6 +263,26 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  // ================= LIST =================
+  Widget _transactionList() {
+    return RefreshIndicator(
+      onRefresh: _loadTransactions,
+      child: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: _transactions.length,
+        itemBuilder: (context, index) {
+          final t = _transactions[index];
+          return TransactionCard(
+            transaction: t,
+            onEdit: (updated, image) => _updateTransaction(updated, image),
+            onDelete: () => _deleteTransaction(t),
+          );
+        },
+      ),
+    );
+  }
+
+  // ================= EMPTY =================
   Widget _emptyState() {
     return Center(
       child: Column(
@@ -144,6 +304,7 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  // ================= ADD DIALOG =================
   void _showAddTransactionDialog(BuildContext context) {
     showModalBottomSheet(
       context: context,
@@ -155,15 +316,9 @@ class _HomePageState extends State<HomePage> {
           borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
         ),
         child: TransactionFormDialog(
-          onSubmit: (transaction) async {
-            await _addTransaction(transaction);
+          onSubmit: (transaction, image) async {
             Navigator.pop(context);
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Transaksi berhasil ditambahkan'),
-                backgroundColor: Colors.green,
-              ),
-            );
+            await _addTransaction(transaction, image);
           },
         ),
       ),

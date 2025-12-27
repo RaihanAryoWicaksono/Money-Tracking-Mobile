@@ -1,12 +1,16 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:money_tracker/services/api_service.dart';
 import '../models/transaction.dart';
-// MAULANA
+
+//Maulana
 import 'package:geocoding/geocoding.dart';
+import 'package:image_picker/image_picker.dart';
 import '../pages/pick_location_page.dart';
 
 class TransactionFormDialog extends StatefulWidget {
   final Transaction? transaction;
-  final Function(Transaction) onSubmit;
+  final Function(Transaction, File?) onSubmit;
 
   const TransactionFormDialog({
     super.key,
@@ -28,6 +32,7 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
   double? _latitude;
   double? _longitude;
   String? _locationName;
+  File? _image;
 
   @override
   void initState() {
@@ -152,6 +157,25 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
                 ),
               ],
 
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                icon: const Icon(Icons.camera_alt),
+                label: const Text('Tambah Foto Bukti'),
+                onPressed: _pickImage,
+              ),
+              const SizedBox(height: 12),
+              const SizedBox(height: 8),
+              Text(
+                'Tips: Pastikan foto fokus dan pencahayaan cukup',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey[600],
+                  fontStyle: FontStyle.italic,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              _imagePreview(),
+
               const SizedBox(height: 24),
               ElevatedButton(
                 onPressed: _submitForm,
@@ -186,21 +210,183 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
       MaterialPageRoute(builder: (_) => const PickLocationPage()),
     );
 
-    if (result != null) {
-      _latitude = result.latitude;
-      _longitude = result.longitude;
+    if (result == null) return;
 
-      final placemarks = await placemarkFromCoordinates(
-        _latitude!,
-        _longitude!,
+    _latitude = result.latitude;
+    _longitude = result.longitude;
+
+    final placemarks = await placemarkFromCoordinates(_latitude!, _longitude!);
+
+    final place = placemarks.first;
+
+    setState(() {
+      _locationName =
+          '${place.street}, ${place.subLocality}, ${place.locality}';
+    });
+  }
+
+  Future<void> _pickImage() async {
+    try {
+      final picker = ImagePicker();
+      final picked = await picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 85, // Compress sedikit untuk stabilitas
+        maxWidth: 1920, // Batasi resolusi
+        maxHeight: 1920,
       );
-      final place = placemarks.first;
+
+      if (picked == null) {
+        debugPrint('No image selected');
+        return;
+      }
+
+      debugPrint('Image picked: ${picked.path}');
+
+      // CRITICAL: Tunggu file benar-benar tersimpan
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      final file = File(picked.path);
+
+      // Validasi file exists
+      if (!await file.exists()) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('File gambar tidak ditemukan'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Validasi file size
+      final fileSize = await file.length();
+      debugPrint('Image size: $fileSize bytes');
+
+      if (fileSize == 0) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('File gambar kosong, coba ambil foto lagi'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
+
+      // Validasi file bisa dibaca
+      try {
+        await file.readAsBytes();
+      } catch (e) {
+        debugPrint('Cannot read image file: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Gambar tidak bisa dibaca, coba lagi'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+        return;
+      }
 
       setState(() {
-        _locationName =
-            '${place.street}, ${place.subLocality}, ${place.locality}';
+        _image = file;
       });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Foto berhasil dipilih'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 1),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('Error picking image: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error: $e'), backgroundColor: Colors.red),
+        );
+      }
     }
+  }
+
+  // FIXED: Method ini sekarang return Widget yang proper
+  Widget _imagePreview() {
+    // Jika ada image yang baru dipilih
+    if (_image != null) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Image.file(
+          _image!,
+          height: 150,
+          width: double.infinity,
+          fit: BoxFit.cover,
+        ),
+      );
+    }
+
+    // Jika ada image dari transaction yang sedang diedit
+    if (widget.transaction?.imageUrl != null) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: Image.network(
+          widget.transaction!.imageUrl!,
+          height: 150,
+          width: double.infinity,
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) {
+            debugPrint('Image Load Error: $error');
+            debugPrint('Image URL: ${widget.transaction!.imageUrl}');
+            return Container(
+              height: 150,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.broken_image, color: Colors.grey[600], size: 40),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Gambar gagal dimuat',
+                    style: TextStyle(color: Colors.grey[600]),
+                  ),
+                ],
+              ),
+            );
+          },
+          loadingBuilder: (context, child, loadingProgress) {
+            if (loadingProgress == null) return child;
+            return Container(
+              height: 150,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: Colors.grey[300],
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Center(
+                child: CircularProgressIndicator(
+                  value: loadingProgress.expectedTotalBytes != null
+                      ? loadingProgress.cumulativeBytesLoaded /
+                            loadingProgress.expectedTotalBytes!
+                      : null,
+                ),
+              ),
+            );
+          },
+        ),
+      );
+    }
+
+    // Jika tidak ada image sama sekali, return empty widget
+    return const SizedBox.shrink();
   }
 
   Widget _buildTypeButton(
@@ -246,25 +432,26 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
   }
 
   void _submitForm() {
-    if (_formKey.currentState!.validate()) {
-      final amount = double.parse(_amountController.text);
+    if (_formKey.currentState?.validate() != true) return;
 
-      final transaction = Transaction(
-        id:
-            widget.transaction?.id ??
-            DateTime.now().millisecondsSinceEpoch.toString(),
-        title: _titleController.text.trim(),
-        amount: amount,
-        date: DateTime.now(),
-        type: _selectedType,
+    final amount = double.parse(_amountController.text);
 
-        // MAULANA
-        latitude: _latitude,
-        longitude: _longitude,
-        locationName: _locationName,
-      );
+    final transaction = Transaction(
+      // Generate ID jika baru, gunakan existing ID jika edit
+      id:
+          widget.transaction?.id ??
+          DateTime.now().millisecondsSinceEpoch.toString(),
+      title: _titleController.text.trim(),
+      amount: amount,
+      date: widget.transaction?.date ?? DateTime.now(),
+      type: _selectedType,
+      latitude: _latitude,
+      longitude: _longitude,
+      locationName: _locationName,
+      imagePath: widget.transaction?.imagePath,
+      imageUrl: widget.transaction?.imageUrl,
+    );
 
-      widget.onSubmit(transaction);
-    }
+    widget.onSubmit(transaction, _image);
   }
 }
