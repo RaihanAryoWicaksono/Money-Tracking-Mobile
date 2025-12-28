@@ -21,17 +21,11 @@ class TransactionMedia extends Model
         'file_size' => 'integer',
     ];
 
-    /**
-     * Relasi ke transactions (Belongs To)
-     */
     public function transaction()
     {
         return $this->belongsTo(Transaction::class);
     }
 
-    /**
-     * Accessor untuk full URL
-     */
     public function getFileUrlAttribute(): string
     {
         return url('storage/' . ltrim($this->file_path, '/'));

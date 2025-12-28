@@ -37,7 +37,7 @@ class Transaction {
   // MAULANA
   factory Transaction.fromJson(Map<String, dynamic> json) {
     return Transaction(
-      id: json['id'].toString(), // Pastikan selalu ada
+      id: json['id'].toString(),
       title: json['title'] ?? '',
       amount: double.parse(json['amount'].toString()),
       type: json['type'] == 'income'
@@ -58,7 +58,7 @@ class Transaction {
 
   Map<String, dynamic> toJson() {
     return {
-      'id': id, // Tambahkan id di toJson juga
+      'id': id,
       'title': title,
       'amount': amount,
       'type': type.name,

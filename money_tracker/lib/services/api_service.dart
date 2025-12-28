@@ -287,7 +287,6 @@ class ApiService {
         final errorData = jsonDecode(response.body);
         errorMessage = errorData['message'] ?? errorMessage;
       } catch (e) {
-        // Jika tidak bisa parse JSON, gunakan raw body
         errorMessage = response.body;
       }
 

@@ -128,7 +128,6 @@ class _HomePageState extends State<HomePage> {
     debugPrint('Transaction ID: ${transaction.id}');
     debugPrint('Transaction Title: ${transaction.title}');
 
-    // Show loading indicator
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -152,19 +151,15 @@ class _HomePageState extends State<HomePage> {
     }
 
     try {
-      // Call API delete
       await ApiService.deleteTransaction(transaction.id);
 
-      // Remove from local list
       setState(() {
         _transactions.removeWhere((t) => t.id == transaction.id);
       });
 
       if (mounted) {
-        // Hide loading
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
 
-        // Show success
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Row(
@@ -184,10 +179,8 @@ class _HomePageState extends State<HomePage> {
       debugPrint('ERROR: $e');
 
       if (mounted) {
-        // Hide loading
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
 
-        // Show error with retry option
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Column(
@@ -243,7 +236,6 @@ class _HomePageState extends State<HomePage> {
           ),
           const SizedBox(height: 16),
 
-          // 🔥 LOADING / EMPTY / LIST STATE
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())

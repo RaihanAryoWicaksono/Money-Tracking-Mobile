@@ -20,13 +20,11 @@ class TransactionResource extends JsonResource
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
             
-            // Image data
             'image_path' => $firstMedia?->file_path,
             'image_url' => $firstMedia 
                 ? url('storage/' . ltrim($firstMedia->file_path, '/'))
                 : null,
             
-            // Location data
             'latitude' => $this->detail?->latitude,
             'longitude' => $this->detail?->longitude,
             'location_name' => $this->detail?->location_name,

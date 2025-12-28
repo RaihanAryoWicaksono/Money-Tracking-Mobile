@@ -260,7 +260,6 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
         return;
       }
 
-      // Validasi file size
       final fileSize = await file.length();
       debugPrint('Image size: $fileSize bytes');
 
@@ -276,7 +275,6 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
         return;
       }
 
-      // Validasi file bisa dibaca
       try {
         await file.readAsBytes();
       } catch (e) {
@@ -315,9 +313,7 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
     }
   }
 
-  // FIXED: Method ini sekarang return Widget yang proper
   Widget _imagePreview() {
-    // Jika ada image yang baru dipilih
     if (_image != null) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(12),
@@ -330,7 +326,6 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
       );
     }
 
-    // Jika ada image dari transaction yang sedang diedit
     if (widget.transaction?.imageUrl != null) {
       return ClipRRect(
         borderRadius: BorderRadius.circular(12),
@@ -385,7 +380,6 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
       );
     }
 
-    // Jika tidak ada image sama sekali, return empty widget
     return const SizedBox.shrink();
   }
 
@@ -437,7 +431,6 @@ class _TransactionFormDialogState extends State<TransactionFormDialog> {
     final amount = double.parse(_amountController.text);
 
     final transaction = Transaction(
-      // Generate ID jika baru, gunakan existing ID jika edit
       id:
           widget.transaction?.id ??
           DateTime.now().millisecondsSinceEpoch.toString(),

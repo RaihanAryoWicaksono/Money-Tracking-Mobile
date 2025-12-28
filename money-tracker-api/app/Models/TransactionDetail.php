@@ -22,9 +22,6 @@ class TransactionDetail extends Model
         'longitude' => 'double',
     ];
 
-    /**
-     * Relasi ke transactions (Belongs To)
-     */
     public function transaction()
     {
         return $this->belongsTo(Transaction::class);
