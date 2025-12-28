@@ -5,27 +5,49 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use App\Models\Transaction;
+use App\Models\TransactionDetail;
+use App\Models\TransactionMedia;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\DB;
 
 class TransactionController extends Controller
 {
     public function index()
     {
-        $transactions = Transaction::latest()->get();
+        $transactions = Transaction::with(['detail', 'media'])
+            ->latest('date')
+            ->get()
+            ->map(function ($transaction) {
+                // Manually append attributes
+                $data = $transaction->toArray();
 
-        foreach ($transactions as $transaction) {
-            if ($transaction->image_path) {
-                \Log::info('Transaction Image:', [
-                    'id' => $transaction->id,
-                    'image_path' => $transaction->image_path,
-                    'image_url' => $transaction->image_url,
-                    'file_exists' => Storage::disk('public')->exists($transaction->image_path)
-                ]);
-            }
-        }
+                // Get first media
+                $firstMedia = $transaction->media->first();
+
+                if ($firstMedia) {
+                    $data['image_url'] = url('storage/' . ltrim($firstMedia->file_path, '/'));
+                    $data['image_path'] = $firstMedia->file_path;
+                } else {
+                    $data['image_url'] = null;
+                    $data['image_path'] = null;
+                }
+
+                // Get detail data
+                if ($transaction->detail) {
+                    $data['location_name'] = $transaction->detail->location_name;
+                    $data['latitude'] = $transaction->detail->latitude;
+                    $data['longitude'] = $transaction->detail->longitude;
+                } else {
+                    $data['location_name'] = null;
+                    $data['latitude'] = null;
+                    $data['longitude'] = null;
+                }
+
+                return $data;
+            });
 
         return response()->json($transactions);
     }
@@ -34,21 +56,6 @@ class TransactionController extends Controller
     {
         Log::info('=== STORE REQUEST START ===');
         Log::info('All Request Data:', $request->all());
-        Log::info('All Files:', $request->allFiles());
-
-        if ($request->hasFile('image')) {
-            $file = $request->file('image');
-            Log::info('Image File Details:', [
-                'original_name' => $file->getClientOriginalName(),
-                'size' => $file->getSize(),
-                'mime_type' => $file->getMimeType(),
-                'extension' => $file->getClientOriginalExtension(),
-                'is_valid' => $file->isValid(),
-                'error' => $file->getError(),
-            ]);
-        } else {
-            Log::info('No image file in request');
-        }
 
         $validator = Validator::make($request->all(), [
             'title' => 'required|string',
@@ -56,6 +63,8 @@ class TransactionController extends Controller
             'type' => 'required|in:income,expense',
             'date' => 'required|date',
             'location_name' => 'nullable|string',
+            'latitude' => 'nullable|numeric',
+            'longitude' => 'nullable|numeric',
             'image' => 'nullable|file|image|mimes:jpg,jpeg,png,gif|max:10240',
         ]);
 
@@ -67,74 +76,73 @@ class TransactionController extends Controller
             ], 422);
         }
 
-        $imagePath = null;
+        DB::beginTransaction();
 
-        if ($request->hasFile('image') && $request->file('image')->isValid()) {
-            try {
+        try {
+            // 1. Simpan transaction utama
+            $transaction = Transaction::create([
+                'title' => $request->title,
+                'amount' => $request->amount,
+                'type' => $request->type,
+                'date' => $request->date ?? now(),
+            ]);
+
+            Log::info('Transaction created with ID: ' . $transaction->id);
+
+            // 2. Simpan detail lokasi (jika ada)
+            if ($request->location_name || $request->latitude || $request->longitude) {
+                TransactionDetail::create([
+                    'transaction_id' => $transaction->id,
+                    'latitude' => $request->latitude,
+                    'longitude' => $request->longitude,
+                    'location_name' => $request->location_name,
+                ]);
+                Log::info('Transaction detail created');
+            }
+
+            // 3. Simpan media/image (jika ada)
+            if ($request->hasFile('image') && $request->file('image')->isValid()) {
                 $file = $request->file('image');
                 $filename = time() . '_' . preg_replace('/[^a-zA-Z0-9._-]/', '', $file->getClientOriginalName());
+                $filePath = $file->storeAs('transactions', $filename, 'public');
 
-                // Store dengan path yang jelas
-                $imagePath = $file->storeAs('transactions', $filename, 'public');
+                TransactionMedia::create([
+                    'transaction_id' => $transaction->id,
+                    'file_path' => $filePath,
+                    'file_type' => $file->getMimeType(),
+                    'file_size' => $file->getSize(),
+                    'original_name' => $file->getClientOriginalName(),
+                ]);
 
-                Log::info('Image stored:', [
-                    'path' => $imagePath,
-                    'full_path' => storage_path('app/public/' . $imagePath),
-                    'exists' => file_exists(storage_path('app/public/' . $imagePath))
-                ]);
-            } catch (\Exception $e) {
-                Log::error('Image Store Exception:', [
-                    'message' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString()
-                ]);
-                return response()->json([
-                    'message' => 'The image failed to upload.',
-                    'errors' => ['image' => [$e->getMessage()]]
-                ], 422);
+                Log::info('Transaction media created: ' . $filePath);
             }
+
+            DB::commit();
+
+            // Load relasi untuk response
+            $transaction->load(['detail', 'media']);
+
+            Log::info('=== STORE REQUEST END - SUCCESS ===');
+            return response()->json($transaction, 201);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Store Exception:', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'message' => 'Failed to create transaction',
+                'errors' => ['general' => [$e->getMessage()]]
+            ], 500);
         }
-
-        $transaction = Transaction::create([
-            'title' => $request->title,
-            'amount' => $request->amount,
-            'type' => $request->type,
-            'date' => $request->date ?? now(),
-            'location_name' => $request->location_name,
-            'image_path' => $imagePath,
-        ]);
-
-        return response()->json($transaction, 201);
     }
 
     public function update(Request $request, $id)
     {
         Log::info('=== UPDATE REQUEST START ===');
         Log::info('Transaction ID: ' . $id);
-        Log::info('Request Method: ' . $request->method());
-        Log::info('All Request Data:', $request->all());
-        Log::info('Has Files: ' . ($request->hasFile('image') ? 'YES' : 'NO'));
-
-        if ($request->hasFile('image')) {
-            $file = $request->file('image');
-            Log::info('Image Details:', [
-                'name' => $file->getClientOriginalName(),
-                'size' => $file->getSize(),
-                'mime' => $file->getMimeType(),
-                'extension' => $file->getClientOriginalExtension(),
-                'valid' => $file->isValid(),
-                'error' => $file->getError(),
-                'temp_path' => $file->getPathname(),
-            ]);
-
-            if (!is_readable($file->getPathname())) {
-                Log::error('File is not readable');
-            }
-
-            $finfo = finfo_open(FILEINFO_MIME_TYPE);
-            $mimeType = finfo_file($finfo, $file->getPathname());
-            finfo_close($finfo);
-            Log::info('Detected MIME type: ' . $mimeType);
-        }
 
         $transaction = Transaction::findOrFail($id);
 
@@ -144,11 +152,9 @@ class TransactionController extends Controller
             'type' => 'required|in:income,expense',
             'date' => 'required',
             'location_name' => 'nullable|string',
-            'image' => 'nullable|file|mimes:jpg,jpeg,png,gif|max:10240',
-        ], [
-            'image.mimes' => 'Format gambar harus jpg, jpeg, png, atau gif',
-            'image.max' => 'Ukuran gambar maksimal 10MB',
-            'image.file' => 'File yang diupload harus berupa file gambar',
+            'latitude' => 'nullable|numeric',
+            'longitude' => 'nullable|numeric',
+            'image' => 'nullable|file|image|mimes:jpg,jpeg,png,gif|max:10240',
         ]);
 
         if ($validator->fails()) {
@@ -159,77 +165,68 @@ class TransactionController extends Controller
             ], 422);
         }
 
+        DB::beginTransaction();
+
         try {
+            // 1. Update transaction utama
             $date = Carbon::parse($request->date)->format('Y-m-d H:i:s');
+            $transaction->update([
+                'title' => $request->title,
+                'amount' => $request->amount,
+                'type' => $request->type,
+                'date' => $date,
+            ]);
 
-            $transaction->title = $request->title;
-            $transaction->amount = $request->amount;
-            $transaction->type = $request->type;
-            $transaction->date = $date;
-            $transaction->location_name = $request->location_name;
-            $transaction->save();
+            Log::info('Transaction updated');
 
-            Log::info('Basic data updated successfully');
-
-            if ($request->hasFile('image')) {
-                $file = $request->file('image');
-
-                if (!$file->isValid()) {
-                    $errorMessage = $this->getUploadErrorMessage($file->getError());
-                    Log::error('Invalid file: ' . $errorMessage);
-                    return response()->json([
-                        'message' => 'The image failed to upload.',
-                        'errors' => ['image' => [$errorMessage]]
-                    ], 422);
-                }
-
-                try {
-                    // Hapus gambar lama
-                    if ($transaction->image_path) {
-                        $oldPath = $transaction->image_path;
-                        if (Storage::disk('public')->exists($oldPath)) {
-                            Storage::disk('public')->delete($oldPath);
-                            Log::info('Old image deleted: ' . $oldPath);
-                        }
-                    }
-
-                    $originalName = $file->getClientOriginalName();
-                    $extension = $file->getClientOriginalExtension();
-                    $filename = time() . '_' . preg_replace('/[^a-zA-Z0-9._-]/', '', pathinfo($originalName, PATHINFO_FILENAME)) . '.' . $extension;
-
-                    Log::info('Attempting to store file: ' . $filename);
-
-                    $path = $file->storeAs('transactions', $filename, 'public');
-
-                    if (!$path) {
-                        throw new \Exception('Failed to store file - storeAs returned false');
-                    }
-
-                    if (!Storage::disk('public')->exists($path)) {
-                        throw new \Exception('File was not saved to storage');
-                    }
-
-                    $transaction->image_path = $path;
-                    $transaction->save();
-
-                    Log::info('New image stored successfully at: ' . $path);
-                    Log::info('File size on disk: ' . Storage::disk('public')->size($path));
-
-                } catch (\Exception $e) {
-                    Log::error('Image Upload Exception:', [
-                        'message' => $e->getMessage(),
-                        'trace' => $e->getTraceAsString()
-                    ]);
-                    return response()->json([
-                        'message' => 'The image failed to upload.',
-                        'errors' => ['image' => ['Storage error: ' . $e->getMessage()]]
-                    ], 422);
-                }
+            // 2. Update atau create detail
+            if ($request->location_name || $request->latitude || $request->longitude) {
+                $transaction->detail()->updateOrCreate(
+                    ['transaction_id' => $transaction->id],
+                    [
+                        'latitude' => $request->latitude,
+                        'longitude' => $request->longitude,
+                        'location_name' => $request->location_name,
+                    ]
+                );
+                Log::info('Transaction detail updated');
             }
 
-            Log::info('=== UPDATE REQUEST END ===');
+            // 3. Handle image update
+            if ($request->hasFile('image') && $request->file('image')->isValid()) {
+                $file = $request->file('image');
 
-            $transaction->refresh();
+                // Hapus media lama
+                $oldMedia = $transaction->media()->first();
+                if ($oldMedia) {
+                    if (Storage::disk('public')->exists($oldMedia->file_path)) {
+                        Storage::disk('public')->delete($oldMedia->file_path);
+                    }
+                    $oldMedia->delete();
+                    Log::info('Old media deleted');
+                }
+
+                // Upload media baru
+                $filename = time() . '_' . preg_replace('/[^a-zA-Z0-9._-]/', '', $file->getClientOriginalName());
+                $filePath = $file->storeAs('transactions', $filename, 'public');
+
+                TransactionMedia::create([
+                    'transaction_id' => $transaction->id,
+                    'file_path' => $filePath,
+                    'file_type' => $file->getMimeType(),
+                    'file_size' => $file->getSize(),
+                    'original_name' => $file->getClientOriginalName(),
+                ]);
+
+                Log::info('New media created: ' . $filePath);
+            }
+
+            DB::commit();
+
+            // Load relasi untuk response
+            $transaction->load(['detail', 'media']);
+
+            Log::info('=== UPDATE REQUEST END - SUCCESS ===');
 
             return response()->json([
                 'success' => true,
@@ -238,10 +235,12 @@ class TransactionController extends Controller
             ], 200);
 
         } catch (\Exception $e) {
+            DB::rollBack();
             Log::error('Update Exception:', [
                 'message' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
+
             return response()->json([
                 'message' => 'Update failed',
                 'errors' => ['general' => [$e->getMessage()]]
@@ -250,61 +249,47 @@ class TransactionController extends Controller
     }
 
     public function destroy($id)
-{
-    Log::info('=== DELETE REQUEST ===');
-    Log::info('Transaction ID: ' . $id);
-    
-    try {
-        $transaction = Transaction::findOrFail($id);
-        
-        Log::info('Transaction found:', [
-            'title' => $transaction->title,
-            'image_path' => $transaction->image_path
-        ]);
-        
-        // Hapus gambar jika ada
-        if ($transaction->image_path) {
-            if (Storage::disk('public')->exists($transaction->image_path)) {
-                Storage::disk('public')->delete($transaction->image_path);
-                Log::info('Image deleted: ' . $transaction->image_path);
-            }
-        }
-        
-        $transaction->delete();
-        Log::info('Transaction deleted successfully');
-        
-        return response()->json([
-            'success' => true,
-            'message' => 'Transaction deleted successfully'
-        ], 200);
-        
-    } catch (\Exception $e) {
-        Log::error('Delete Exception:', [
-            'message' => $e->getMessage(),
-            'trace' => $e->getTraceAsString()
-        ]);
-        
-        return response()->json([
-            'success' => false,
-            'message' => 'Failed to delete transaction',
-            'error' => $e->getMessage()
-        ], 500);
-    }
-}
-
-    private function getUploadErrorMessage($errorCode)
     {
-        $errors = [
-            UPLOAD_ERR_OK => 'No error',
-            UPLOAD_ERR_INI_SIZE => 'File exceeds upload_max_filesize in php.ini',
-            UPLOAD_ERR_FORM_SIZE => 'File exceeds MAX_FILE_SIZE in HTML form',
-            UPLOAD_ERR_PARTIAL => 'File was only partially uploaded',
-            UPLOAD_ERR_NO_FILE => 'No file was uploaded',
-            UPLOAD_ERR_NO_TMP_DIR => 'Missing temporary folder',
-            UPLOAD_ERR_CANT_WRITE => 'Failed to write file to disk',
-            UPLOAD_ERR_EXTENSION => 'PHP extension stopped file upload',
-        ];
+        Log::info('=== DELETE REQUEST ===');
+        Log::info('Transaction ID: ' . $id);
 
-        return $errors[$errorCode] ?? 'Unknown upload error';
+        DB::beginTransaction();
+
+        try {
+            $transaction = Transaction::with(['detail', 'media'])->findOrFail($id);
+
+            // Hapus semua file media
+            foreach ($transaction->media as $media) {
+                if (Storage::disk('public')->exists($media->file_path)) {
+                    Storage::disk('public')->delete($media->file_path);
+                    Log::info('Media file deleted: ' . $media->file_path);
+                }
+            }
+
+            // Delete transaction (cascade akan hapus detail dan media dari DB)
+            $transaction->delete();
+
+            DB::commit();
+
+            Log::info('Transaction deleted successfully');
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Transaction deleted successfully'
+            ], 200);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Delete Exception:', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to delete transaction',
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 }

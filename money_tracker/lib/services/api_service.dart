@@ -7,9 +7,9 @@ import '../models/transaction.dart';
 
 class ApiService {
   static const String baseUrl =
-      'http://192.168.xxx.xxx:8000/api'; // CEK CMD > IPCONFIG >  IPv4 Address
+      'http://xxx.xxx.xxx.xxx:8000/api'; // CEK CMD > IPCONFIG >  IPv4 Address
   static const String imageUrl =
-      'http://192.168.xxx.xxx:8000/storage'; // CEK CMD > IPCONFIG >  IPv4 Address
+      'http://xxx.xxx.xxx.xxx:8000/storage'; // CEK CMD > IPCONFIG >  IPv4 Address
 
   static Future<List<Transaction>> fetchTransactions() async {
     final response = await http.get(
