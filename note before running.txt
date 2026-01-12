@@ -1,0 +1,4 @@
+harus ganti ip di lib/services/api_servies.dart
+
+run Laravel pakai:
+php artisan serve --host=0.0.0.0 --port=8000
